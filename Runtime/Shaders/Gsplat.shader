@@ -27,6 +27,7 @@ Shader "Gsplat/Standard"
 
             #include "UnityCG.cginc"
             #include "Gsplat.hlsl"
+            #include "GsplatColorVolume.hlsl"
             #ifdef UNCOMPRESSED
             #include "GsplatUncompressed.hlsl"
             #endif
@@ -103,7 +104,21 @@ Shader "Gsplat/Standard"
                 color.rgb += EvalSH(sh, dir, _SHDegree);
                 #endif
 
-                ClipCorner(corner, color.w);
+                // --- Colour volumes: recolour / re-opacify splats inside a box or ellipsoid ---
+                #ifdef UNCOMPRESSED
+                float3 modelCenter = _PositionBuffer[source.id];
+                #else // SPARK
+                float4 _cvColor;
+                float3 modelCenter;
+                float3 _cvScale;
+                float4 _cvQuat;
+                UnpackSplat(_PackedSplatsBuffer[source.id], _cvColor, modelCenter, _cvScale, _cvQuat);
+                #endif
+                ApplyColorVolumes(modelCenter, color);
+                // ---------------------------------------------------------------------------
+
+                // max() guard keeps ClipCorner finite when a volume fades a splat to alpha 0
+                ClipCorner(corner, max(color.w, 1.0 / 255.0));
 
                 o.vertex = center.proj + float4(corner.offset.x, _ProjectionParams.x * corner.offset.y, 0, 0);
                 o.color = color;

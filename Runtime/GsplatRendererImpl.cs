@@ -34,6 +34,8 @@ namespace Gsplat
         static readonly int k_shDegree = Shader.PropertyToID("_SHDegree");
         static readonly int k_brightness = Shader.PropertyToID("_Brightness");
         static readonly int k_scaleFactor = Shader.PropertyToID("_ScaleFactor");
+        static readonly int k_colorVolumesBuffer = Shader.PropertyToID("_ColorVolumesBuffer");
+        static readonly int k_colorVolumesCount = Shader.PropertyToID("_ColorVolumesCount");
 
         uint m_framesBeforeRecomputeSort = 0;
         uint m_sortsBeforeRecomputeCutouts = 0;
@@ -43,6 +45,9 @@ namespace Gsplat
 
         GsplatCutout.ShaderData[] m_cutoutsData;
         uint m_prevSplatCount;
+
+        GraphicsBuffer m_colorVolumesBuffer;
+        GsplatColorVolume.ShaderData[] m_colorVolumesData = Array.Empty<GsplatColorVolume.ShaderData>();
 
         public GsplatRendererImpl(uint splatCount)
         {
@@ -181,6 +186,33 @@ namespace Gsplat
             OrderSizeBuffer = null;
             BoundsBuffer?.Dispose();
             BoundsBuffer = null;
+            m_colorVolumesBuffer?.Dispose();
+            m_colorVolumesBuffer = null;
+        }
+
+        // Gather all active GsplatColorVolume components, upload them, and bind to the
+        // render material's property block. Called every frame from Render().
+        void UpdateColorVolumes(Transform transform)
+        {
+            var list = GsplatColorVolume.m_Registered;
+            int count = list.Count;
+            int capacity = Math.Max(1, count); // structured buffers must have >= 1 element
+
+            if (m_colorVolumesBuffer == null || m_colorVolumesBuffer.count != capacity)
+            {
+                m_colorVolumesBuffer?.Dispose();
+                m_colorVolumesBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured,
+                    capacity, GsplatColorVolume.ShaderDataSize);
+                m_colorVolumesData = new GsplatColorVolume.ShaderData[capacity];
+            }
+
+            Matrix4x4 rendererMatrix = transform.localToWorldMatrix; // == _MATRIX_M
+            for (int i = 0; i < count; i++)
+                m_colorVolumesData[i] = list[i].GetShaderData(rendererMatrix);
+
+            m_colorVolumesBuffer.SetData(m_colorVolumesData);
+            m_propertyBlock.SetBuffer(k_colorVolumesBuffer, m_colorVolumesBuffer);
+            m_propertyBlock.SetInteger(k_colorVolumesCount, count);
         }
 
         public void ForceRefresh()
@@ -265,6 +297,8 @@ namespace Gsplat
         {
             if (m_remainingCount <= 0)
                 return;
+
+            UpdateColorVolumes(transform);
 
             m_propertyBlock.SetInteger(k_splatCount, (int)m_remainingCount);
             m_propertyBlock.SetInteger(k_gammaToLinear, gammaToLinear ? 1 : 0);
